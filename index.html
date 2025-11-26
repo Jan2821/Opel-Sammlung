@@ -165,7 +165,10 @@
             // Fügt das Auto am Anfang der Liste hinzu
             collectionData.unshift(neuesAuto); 
             
-            // Speichern (wird automatisch gerendert durch onSnapshot)
+            // FIX: Ruft renderCollection sofort auf, damit der Nutzer das Auto sieht!
+            renderCollection();
+
+            // Speichern (wird automatisch durch onSnapshot bestätigt und synchronisiert)
             saveCollection();
 
             // Formular leeren
@@ -476,3 +479,4 @@
     </div>
 </body>
 </html>
+
