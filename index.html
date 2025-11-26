@@ -5,6 +5,13 @@
 <!-- WICHTIG: Optimiert für iPad und Touch-Geräte (Vollbildmodus) -->
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Meine Opel Sammlung</title>
+
+<!-- NEUE ZEILEN FÜR DAS HOMESCREEN-ICON -->
+<!-- Die Datei muss als opel-logo.png im Hauptverzeichnis auf GitHub liegen! -->
+<link rel="apple-touch-icon" href="opel-logo.png">
+<link rel="apple-touch-icon" sizes="180x180" href="opel-logo.png">
+<!-- Ende Homescreen-Icon -->
+
 <!-- Tailwind CSS für modernes, mobiles Design -->
 <script src="https://cdn.tailwindcss.com"></script>
 <!-- Inter Font für bessere Lesbarkeit -->
@@ -470,13 +477,13 @@ onclick="autoHinzufuegen()">
 
 <!-- AKTIONEN-BUTTONS -->
 <div class="no-print flex flex-col md:flex-row space-y-3 md:space-y-0 md:space-x-3 mt-6">
-<!-- NEUER BUTTON: SAMMLUNG LÖSCHEN -->
+<!-- BUTTON: SAMMLUNG LÖSCHEN -->
 <button class="w-full md:w-auto bg-red-600 hover:bg-red-700 text-white p-4 rounded-xl font-bold text-lg shadow-md active:shadow-sm"
 onclick="listeVollstaendigLoeschen()">
 ❌ Gesamte Sammlung löschen
 </button>
 
-<!-- VORHANDENER BUTTON: DRUCKEN/PDF -->
+<!-- BUTTON: DRUCKEN/PDF -->
 <button class="w-full md:w-auto bg-green-500 hover:bg-green-600 text-white p-4 rounded-xl font-bold text-lg shadow-md active:shadow-sm"
 onclick="window.print()">
 Liste drucken / als PDF exportieren
