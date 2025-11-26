@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<!-- WICHTIG: Optimiert für iPad und Touch-Geräte (Vollbildmodus) -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Meine Opel Sammlung</title>
+<!-- Tailwind CSS für modernes, mobiles Design -->
+<script src="https://cdn.tailwindcss.com"></script>
+<!-- Inter Font für bessere Lesbarkeit -->
+<style>
+body { font-family: 'Inter', sans-serif; background-color: #f0f4f8; }
+/* Custom Styling für das Opel-Branding (Gelb/Blau) */
+.opel-blue { background-color: #007AFF; }
+.opel-yellow { color: #E3A300; }
+.btn-primary {
+background-color: #007AFF;
+transition: all 0.2s;
+box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.06);
+}
+.btn-primary:hover { background-color: #0056b3; }
+/* Sorgt dafür, dass die Tabelle auf kleinen Geräten scrollbar ist */
+.table-wrapper { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+/* Für das Drucken */
+@media print {
+.no-print { display: none !important; }
+body { background: white; padding: 0; }
+.container { box-shadow: none; border: none; width: 100%; max-width: 100%; padding: 0; }
+}
+</style>
+
+<!-- Firebase SDKs für die Datenspeicherung (Firestore) -->
+<script type="module">
+// Importiert die notwendigen Firebase-Module
+import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+import { getFirestore, doc, setDoc, onSnapshot, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+// MANDATORY: Global environment variables for Firebase
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+// Globale Variablen für Firebase und Daten
+let db, auth;
+let userId = null;
+let collectionData = []; // Die lokale Kopie der Sammlung
+
+setLogLevel('Debug'); // Aktiviert Logging in der Konsole
+
+/**
+* Initialisiert Firebase und authentifiziert den Nutzer.
+*/
+async function initializeFirebase() {
+try {
+const app = initializeApp(firebaseConfig);
+db = getFirestore(app);
+auth = getAuth(app);
+
+// Autorisierung
+if (initialAuthToken) {
+await signInWithCustomToken(auth, initialAuthToken);
+} else {
+await signInAnonymously(auth);
+}
+
+// Listener für den Authentifizierungsstatus
+onAuthStateChanged(auth, (user) => {
+if (user) {
+userId = user.uid;
+// Zeigt die ID für den Multi-Geräte-Sync
+document.getElementById('user-id').textContent = `Benutzer-ID: ${userId}`;
+startSnapshotListener(); // Startet den Daten-Sync
+} else {
+userId = null;
+document.getElementById('user-id').textContent = 'Anmeldung läuft...';
+}
+});
+
+} catch (error) {
+console.error("Fehler bei der Firebase-Initialisierung:", error);
+document.getElementById('user-id').textContent = 'FEHLER bei Firebase-Initialisierung';
+}
+}
+
+/**
+* Erstellt den Pfad zum Dokument in Firestore (privater Speicher).
+*/
+function getCollectionDocRef(id) {
+// Pfad: /artifacts/{appId}/users/{userId}/opel_collection/user_data
+return doc(db, `artifacts/${appId}/users/${id}/opel_collection/user_data`);
+}
+
+/**
+* Startet den Echtzeit-Listener (onSnapshot) für die Sammlung.
+*/
+function startSnapshotListener() {
+if (!db || !userId) return;
+
+const docRef = getCollectionDocRef(userId);
+
+// onSnapshot hört auf Änderungen in Echtzeit und lädt Daten automatisch neu
+onSnapshot(docRef, (docSnap) => {
+if (docSnap.exists() && docSnap.data().cars) {
+collectionData = docSnap.data().cars;
+renderCollection();
+} else {
+collectionData = [];
+renderCollection();
+}
+}, (error) => {
+console.error("Fehler beim Abrufen der Daten:", error);
+showTemporaryMessage('Fehler beim Laden der Daten. Bitte prüfen Sie Ihre Verbindung.', 'error');
+});
+}
+
+/**
+* Speichert die aktuelle Sammlung (collectionData) in Firestore.
+*/
+async function saveCollection() {
+if (!db || !userId) return;
+
+const docRef = getCollectionDocRef(userId);
+try {
+// Speichert das gesamte Array im 'cars'-Feld des Dokuments
+await setDoc(docRef, { cars: collectionData }, { merge: false });
+showTemporaryMessage('Sammlung wurde gespeichert und synchronisiert.', 'success');
+} catch (error) {
+console.error("Fehler beim Speichern der Daten:", error);
+showTemporaryMessage('FEHLER beim Speichern der Sammlung.', 'error');
+}
+}
+
+/**
+* Fügt ein neues Auto zur lokalen Liste hinzu und speichert es.
+*/
+window.autoHinzufuegen = function() {
+const modellSelect = document.getElementById('modell');
+const vinInput = document.getElementById('vin');
+const ausstattungSelect = document.getElementById('ausstattung');
+const motorInput = document.getElementById('motor');
+const sonderausstattungTextarea = document.getElementById('sonderausstattung');
+
+const modell = modellSelect.value;
+const vin = vinInput.value.trim().toUpperCase();
+const ausstattung = ausstattungSelect.value;
+const motor = motorInput.value.trim();
+const sonderausstattung = sonderausstattungTextarea.value.trim();
+
+if (modell === "" || vin === "") {
+showTemporaryMessage("Bitte mindestens Modell und VIN angeben!", 'warning');
+return;
+}
+
+// Erstellt das neue Auto-Objekt
+const neuesAuto = {
+id: Date.now(), // Eindeutige ID für das Löschen
+modell,
+vin,
+ausstattung,
+motor,
+sonderausstattung
+};
+
+// Fügt das Auto am Anfang der Liste hinzu
+collectionData.unshift(neuesAuto);
+
+// Speichern (wird automatisch gerendert durch onSnapshot)
+saveCollection();
+
+// Formular leeren
+modellSelect.value = "";
+vinInput.value = "";
+motorInput.value = "";
+ausstattungSelect.value = "-";
+sonderausstattungTextarea.value = "";
+}
+
+/**
+* Löscht ein Auto basierend auf der ID.
+*/
+window.deleteCar = function(idToDelete) {
+// Konfiguriert den Confirm Dialog für das Löschen EINES Autos
+showConfirmDialog('Möchten Sie dieses Fahrzeug wirklich löschen? Dieser Schritt kann nicht rückgängig gemacht werden.', () => {
+const originalLength = collectionData.length;
+collectionData = collectionData.filter(car => car.id !== idToDelete);
+if (collectionData.length < originalLength) {
+saveCollection(); // Speichert die gekürzte Liste
+showTemporaryMessage('Fahrzeug gelöscht.', 'success');
+}
+});
+}
+
+/**
+* LÖSCHT DIE GESAMTE SAMMLUNG.
+*/
+window.listeVollstaendigLoeschen = function() {
+// Konfiguriert den Confirm Dialog für das LÖSCHEN DER GESAMTEN LISTE
+showConfirmDialog('SIND SIE SICHER? Sie werden die GESAMTE Opel-Sammlung unwiderruflich löschen.', () => {
+collectionData = [];
+saveCollection(); // Speichert eine leere Liste
+showTemporaryMessage('Die gesamte Sammlung wurde gelöscht.', 'success');
+}, 'Alle löschen'); // Benutzerdefinierter Button-Text
+}
+
+/**
+* Zeigt den benutzerdefinierten Bestätigungsdialog an.
+* @param {string} text - Der anzuzeigende Text.
+* @param {function} onConfirm - Callback-Funktion bei Bestätigung.
+* @param {string} confirmText - Optionaler Text für den Bestätigungsbutton.
+*/
+function showConfirmDialog(text, onConfirm, confirmText = 'Bestätigen') {
+const customConfirm = document.getElementById('custom-confirm');
+const confirmTextElement = document.getElementById('confirm-text');
+const confirmYes = document.getElementById('confirm-yes');
+const confirmNo = document.getElementById('confirm-no');
+
+confirmTextElement.textContent = text;
+confirmYes.textContent = confirmText; // Setzt den Text des Bestätigungsbuttons
+
+// Entfernt vorherige Listener, um Doppelausführung zu verhindern
+confirmYes.onclick = null;
+confirmNo.onclick = null;
+
+customConfirm.classList.remove('hidden');
+
+confirmYes.onclick = () => {
+customConfirm.classList.add('hidden');
+onConfirm(); // Führt die Aktion aus
+};
+
+confirmNo.onclick = () => {
+customConfirm.classList.add('hidden');
+};
+}
+
+/**
+* Rendert die aktuelle Sammlung in die Tabelle.
+*/
+function renderCollection() {
+const tabelleBody = document.getElementById('autoTabelleBody');
+tabelleBody.innerHTML = ''; // Leert die Tabelle
+
+if (collectionData.length === 0) {
+tabelleBody.innerHTML = '<tr><td colspan="6" class="text-center py-4 text-gray-500">Noch keine Fahrzeuge erfasst.</td></tr>';
+return;
+}
+
+collectionData.forEach(car => {
+const neueZeile = tabelleBody.insertRow();
+neueZeile.className = 'hover:bg-gray-50';
+
+neueZeile.innerHTML = `
+<td class="p-3 border-t"><b>Opel ${car.modell}</b></td>
+<td class="p-3 border-t font-mono text-sm">${car.vin}</td>
+<td class="p-3 border-t">${car.ausstattung}</td>
+<td class="p-3 border-t">${car.motor}</td>
+<td class="p-3 border-t whitespace-pre-wrap">${car.sonderausstattung}</td>
+<td class="p-3 border-t">
+<button onclick="deleteCar(${car.id})"
+class="p-2 bg-red-500 text-white rounded-lg text-xs font-bold shadow-md hover:bg-red-600 transition duration-150">
+Löschen
+</button>
+</td>
+`;
+});
+}
+
+/**
+* Zeigt eine temporäre Benachrichtigung (anstelle von alert/confirm) an.
+*/
+function showTemporaryMessage(message, type) {
+const msgBox = document.getElementById('global-message');
+msgBox.textContent = message;
+// Setzt die Klasse für die Animation
+msgBox.className = 'fixed bottom-5 right-5 p-4 rounded-xl shadow-lg z-50 text-white font-semibold transition-opacity duration-300 opacity-100';
+
+// Setzt die Farbe basierend auf dem Typ
+if (type === 'success') {
+msgBox.classList.add('bg-green-600');
+} else if (type === 'warning') {
+msgBox.classList.add('bg-yellow-600');
+} else if (type === 'error') {
+msgBox.classList.add('bg-red-600');
+}
+
+// Stellt sicher, dass es sichtbar ist (falls die Transition nicht sofort greift)
+msgBox.style.opacity = '1';
+
+// Versteckt die Box nach 3 Sekunden
+setTimeout(() => {
+msgBox.style.opacity = '0';
+}, 3000);
+}
+
+// Startet Firebase, sobald das DOM geladen ist
+window.onload = initializeFirebase;
+</script>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-start py-8">
+
+<!-- Globale Benachrichtigungsbox -->
+<div id="global-message" style="opacity:0;" class="fixed bottom-5 right-5 p-4 rounded-xl shadow-lg z-50 text-white font-semibold transition-opacity duration-300"></div>
+
+<!-- Custom Confirm Dialog (anstelle von window.confirm) -->
+<div id="custom-confirm" class="hidden fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center z-[100]">
+<div class="bg-white p-6 rounded-xl shadow-2xl w-80 max-w-sm">
+<h3 class="text-xl font-bold mb-4 text-red-600">Bestätigung erforderlich</h3>
+<p id="confirm-text" class="mb-6 text-gray-700">Wollen Sie das wirklich tun?</p>
+<div class="flex justify-end space-x-3">
+<!-- Die onclick-Handler werden dynamisch in JavaScript gesetzt -->
+<button id="confirm-no" class="px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 transition">Abbrechen</button>
+<button id="confirm-yes" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition">Bestätigen</button>
+</div>
+</div>
+</div>
+
+
+<div class="w-full max-w-4xl px-4 md:px-0">
+<div class="bg-white p-6 md:p-8 rounded-2xl shadow-xl border-t-8 border-opel-blue">
+<div class="no-print">
+<h2 class="text-4xl font-extrabold text-center opel-yellow mb-2">⚡ Opel Sammlung</h2>
+<p class="text-center text-gray-500 mb-6">Fahrzeug-Erfassung und Synchronisierung</p>
+<p id="user-id" class="text-xs text-right text-gray-400 mb-4">Anmeldung läuft...</p>
+
+<!-- FORMULAR FÜR NEUES AUTO -->
+<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+<div>
+<label for="modell" class="font-semibold text-gray-700 text-sm mb-1">Opel Modell</label>
+<select id="modell" class="w-full p-3 border-2 border-gray-300 rounded-lg focus:border-opel-blue focus:ring-opel-blue">
+<option value="">Bitte wählen...</option>
+<option value="Adam">Adam</option>
+<option value="Agila">Agila</option>
+<option value="Ampera">Ampera / Ampera-e</option>
+<option value="Antara">Antara</option>
+<option value="Ascona">Ascona</option>
+<option value="Astra F">Astra F</option>
+<option value="Astra G">Astra G</option>
+<option value="Astra H">Astra H</option>
+<option value="Astra J">Astra J</option>
+<option value="Astra K">Astra K</option>
+<option value="Astra L">Astra L (Aktuell)</option>
+<option value="Calibra">Calibra</option>
+<option value="Cascada">Cascada</option>
+<option value="Combo">Combo</option>
+<option value="Commodore">Commodore</option>
+<option value="Corsa A">Corsa A</option>
+<option value="Corsa B">Corsa B</option>
+<option value="Corsa C">Corsa C</option>
+<option value="Corsa D">Corsa D</option>
+<option value="Corsa E">Corsa E</option>
+<option value="Corsa F">Corsa F</option>
+<option value="Crossland">Crossland / X</option>
+<option value="Diplomat">Diplomat</option>
+<option value="Frontera">Frontera</option>
+<option value="Grandland">Grandland / X</option>
+<option value="GT">GT (Oldtimer oder Roadster)</option>
+<option value="Insignia A">Insignia A</option>
+<option value="Insignia B">Insignia B</option>
+<option value="Kadett">Kadett (A-E)</option>
+<option value="Kapitän">Kapitän</option>
+<option value="Karl">Karl</option>
+<option value="Manta">Manta</option>
+<option value="Meriva">Meriva</option>
+<option value="Mokka">Mokka / Mokka X</option>
+<option value="Monza">Monza</option>
+<option value="Movano">Movano</option>
+<option value="Omega A">Omega A</option>
+<option value="Omega B">Omega B</option>
+<option value="Rekord">Rekord</option>
+<option value="Senator">Senator</option>
+<option value="Signum">Signum</option>
+<option value="Speedster">Speedster</option>
+<option value="Tigra">Tigra / TwinTop</option>
+<option value="Vectra A">Vectra A</option>
+<option value="Vectra B">Vectra B</option>
+<option value="Vectra C">Vectra C</option>
+<option value="Vivaro">Vivaro</option>
+<option value="Zafira A">Zafira A</option>
+<option value="Zafira B">Zafira B</option>
+<option value="Zafira Tourer">Zafira Tourer (C)</option>
+<option value="Zafira Life">Zafira Life</option>
+<option value="Sonstiges">Sonstiges / Oldtimer</option>
+</select>
+</div>
+
+<div>
+<label for="vin" class="font-semibold text-gray-700 text-sm mb-1">VIN (Fahrgestellnummer)</label>
+<input type="text" id="vin" placeholder="W0L..."
+class="w-full p-3 border-2 border-gray-300 rounded-lg focus:border-opel-blue focus:ring-opel-blue text-sm font-mono uppercase">
+</div>
+</div>
+
+<div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
+<div>
+<label for="ausstattung" class="font-semibold text-gray-700 text-sm mb-1">Ausstattungslinie</label>
+<select id="ausstattung" class="w-full p-3 border-2 border-gray-300 rounded-lg focus:border-opel-blue focus:ring-opel-blue">
+<option value="-">Bitte wählen...</option>
+<option value="OPC">OPC</option>
+<option value="GSi">GSi</option>
+<option value="GSe">GSe</option>
+<option value="GS Line">GS Line</option>
+<option value="GT / Sport">GT / Sport</option>
+<option value="Nürburgring Edition">Nürburgring Edition</option>
+<option value="Ultimate">Ultimate</option>
+<option value="Innovation">Innovation</option>
+<option value="Cosmo">Cosmo</option>
+<option value="Elegance">Elegance</option>
+<option value="CDX">CDX</option>
+<option value="Edition">Edition</option>
+<option value="Selection">Selection</option>
+<option value="Active">Active</option>
+<option value="Enjoy">Enjoy</option>
+<option value="Color Edition">Color Edition</option>
+<option value="Business">Business</option>
+<option value="120 Jahre">120 Jahre Edition</option>
+<option value="150 Jahre">150 Jahre Edition</option>
+<option value="Club">Club</option>
+<option value="Comfort">Comfort</option>
+<option value="CD">CD</option>
+<option value="GLS">GLS</option>
+<option value="GL">GL</option>
+<option value="Berlina">Berlina</option>
+<option value="California">California</option>
+<option value="Diamant">Diamant</option>
+<option value="Sonstige">Sonstige / Sonderedition</option>
+</select>
+</div>
+
+<div>
+<label for="motor" class="font-semibold text-gray-700 text-sm mb-1">Motor</label>
+<input type="text" id="motor" placeholder="z.B. 2.0 Turbo, 1.4 TwinPort"
+class="w-full p-3 border-2 border-gray-300 rounded-lg focus:border-opel-blue focus:ring-opel-blue">
+</div>
+</div>
+
+<div class="mt-4">
+<label for="sonderausstattung" class="font-semibold text-gray-700 text-sm mb-1">Sonderausstattung (Freitext)</label>
+<textarea id="sonderausstattung" placeholder="z.B. Standheizung, Matrix-Licht, Ledersitze, etc."
+class="w-full p-3 border-2 border-gray-300 rounded-lg focus:border-opel-blue focus:ring-opel-blue min-h-[80px]"></textarea>
+</div>
+
+<button class="btn-primary w-full p-4 rounded-xl font-bold text-lg text-white mt-5 shadow-lg active:shadow-sm"
+onclick="autoHinzufuegen()">
++ Opel zur Sammlung hinzufügen
+</button>
+<hr class="my-8 border-gray-200">
+</div>
+
+<!-- SAMMLUNGS-TABELLE -->
+<h3 class="text-2xl font-bold text-gray-800 mb-4">Erfasste Fahrzeuge</h3>
+<div class="table-wrapper">
+<table id="autoTabelle" class="min-w-full bg-white border border-gray-200 rounded-lg">
+<thead>
+<tr class="bg-gray-100">
+<th class="p-3 border-b-2 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Modell</th>
+<th class="p-3 border-b-2 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">VIN</th>
+<th class="p-3 border-b-2 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Ausstattung</th>
+<th class="p-3 border-b-2 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Motor</th>
+<th class="p-3 border-b-2 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider w-1/3">Sonderausstattung</th>
+<th class="p-3 border-b-2 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider no-print">Aktion</th>
+</tr>
+</thead>
+<tbody id="autoTabelleBody">
+<!-- Inhalt wird von JavaScript dynamisch geladen und synchronisiert -->
+</tbody>
+</table>
+</div>
+
+<!-- AKTIONEN-BUTTONS -->
+<div class="no-print flex flex-col md:flex-row space-y-3 md:space-y-0 md:space-x-3 mt-6">
+<!-- NEUER BUTTON: SAMMLUNG LÖSCHEN -->
+<button class="w-full md:w-auto bg-red-600 hover:bg-red-700 text-white p-4 rounded-xl font-bold text-lg shadow-md active:shadow-sm"
+onclick="listeVollstaendigLoeschen()">
+❌ Gesamte Sammlung löschen
+</button>
+
+<!-- VORHANDENER BUTTON: DRUCKEN/PDF -->
+<button class="w-full md:w-auto bg-green-500 hover:bg-green-600 text-white p-4 rounded-xl font-bold text-lg shadow-md active:shadow-sm"
+onclick="window.print()">
+Liste drucken / als PDF exportieren
+</button>
+</div>
+</div>
+</div>
+</body>
+</html>
